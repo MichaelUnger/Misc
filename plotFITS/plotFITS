@@ -1,0 +1,134 @@
+#!/usr/bin/env python3
+
+import healpy as hp
+import numpy as np
+import matplotlib.pyplot as plt
+from astropy.io import fits
+import argparse
+import sys
+from matplotlib.colors import ListedColormap
+
+parser = argparse.ArgumentParser(description="Plot a HEALPix map from a"
+                                 " FITS file.")
+parser.add_argument("filename", help="Path to the FITS file")
+parser.add_argument("column", nargs="?",
+                    help="Column name to plot (e.g., 'P_STDDEV') "
+                    " list columns if none is given", default=None)
+parser.add_argument("--hdu", type=int, default=1, help="HDU of column to plot")
+parser.add_argument("--list", action="store_true",
+                    help="list available columns")
+parser.add_argument("--log", action="store_true",
+                    help="Use logarithmic color scale")
+parser.add_argument("--min", type=float,
+                    help="Minimum value for color scale", default=None)
+parser.add_argument("--max", type=float, help="Maximum value for color scale",
+                    default=None)
+parser.add_argument("--cmap", type=str, help="Choose a color map (e.g.,"
+                    "'inferno', 'viridis', 'plasma')", default="inferno")
+parser.add_argument("--save", type=str,
+                    help="Save the plot to a file (e.g., 'output.png')")
+parser.add_argument("--grid", action="store_true",
+                    help="Show grid lines on the map")
+parser.add_argument("--cartview", action="store_true",
+                    help="Use Cartesian projection instead of Mollweide")
+parser.add_argument("--ncolors", type=int,
+                    help="Number of discrete colors in the colormap",
+                    default=None)
+
+args = parser.parse_args()
+
+# Open the FITS file
+with fits.open(args.filename) as hdu_list:
+
+    if args.column is None or args.hdu is None or args.list:
+        for i, hdu in enumerate(hdu_list):
+            header = hdu_list[i].header
+            print('-' * 40)
+            print(f'HDU {i}:')
+            print("=== FITS HEADER ===")
+            print(repr(header))
+            if isinstance(hdu, fits.BinTableHDU) or isinstance(hdu, fits.TableHDU):
+                print("\n=== AVAILABLE COLUMNS ===")
+                columns = hdu_list[i].columns.names
+                for i, col in enumerate(columns, 1):
+                    print(f"{i}: {col}")
+        sys.exit(0)
+
+
+    if len(hdu_list) <= args.hdu:
+        print(f"Error: HDU {args.hdu} does not exist.")
+        sys.exit(1)
+
+    hdu = hdu_list[args.hdu]
+    if not isinstance(hdu, fits.BinTableHDU) and not isinstance(hdu, fits.TableHDU):
+        print(f"Error: no table in HDU {args.hdu}.")
+        sys.exit(1)
+
+    columns = hdu.columns.names
+    header = hdu.header
+    if args.column not in columns:
+        print(f"Error: Column '{args.column}' not found in the FITS file.")
+        print("Available columns:", columns)
+        sys.exit(1)
+
+    data = hdu.data[args.column]
+    unit = header.get(f"TUNIT{columns.index(args.column) + 1}", "UNKNOWN")
+
+
+data_flat = data.flatten()
+
+nside = header.get("NSIDE", 1024)
+ordering = header.get("ORDERING", "RING").strip().upper()
+nest = ordering == "NESTED"
+
+if args.log:
+    data_flat[data_flat <= 0] = np.nan
+    norm = "log"
+else:
+    norm = None
+
+
+cmap = plt.get_cmap(args.cmap)
+if args.ncolors:
+    cmap = ListedColormap(cmap(np.linspace(0, 1, args.ncolors)))
+
+vmin = args.min if args.min is not None else np.nanmin(data_flat)
+vmax = args.max if args.max is not None else np.nanmax(data_flat)
+
+if args.cartview:
+    hp.cartview(
+        data_flat,
+        title=f"{args.column} HEALPix Map",
+        cmap=cmap,
+        unit=unit,
+        norm=norm,
+        min=vmin,
+        max=vmax,
+        nest=nest
+    )
+else:
+    hp.mollview(
+        data_flat,
+        title=f"{args.column} HEALPix Map",
+        cmap=cmap,
+        unit=unit,
+        norm=norm,
+        min=vmin,
+        max=vmax,
+        nest=nest
+    )
+
+if args.grid:
+    plt.grid(True)
+    hp.graticule()
+else:
+    plt.grid(False)
+
+
+
+
+if args.save:
+    plt.savefig(args.save)
+    print(f"Plot saved as {args.save}")
+
+plt.show()
